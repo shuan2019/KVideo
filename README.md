@@ -175,11 +175,25 @@
 
 ### 跨设备配置同步
 
-- **服务端存储**：视频源、订阅、显示设置等自动同步到服务端（文件存储，无需 Redis）
-- **自动拉取**：打开应用时自动从服务端拉取最新配置
-- **自动推送**：设置变更后自动延迟推送到服务端（防抖 3 秒）
-- **多设备支持**：电脑端配置的源和设置，手机端打开即可使用
-- **PWA 兼容**：iOS PWA 模式下配置不再丢失
+解决 iOS Safari「添加到主屏幕」后 PWA 与浏览器之间 localStorage 不共享的问题（[#119](https://github.com/KuekHaoYang/KVideo/issues/119)），同时实现多设备配置共享（[#115](https://github.com/KuekHaoYang/KVideo/issues/115)）。
+
+**工作原理：**
+
+1. **服务端存储（Upstash Redis）**：用户配置通过 `/api/user/config` API 存储在 Upstash Redis 中，使用 `user:config:{profileId}` 作为 key。Edge Runtime 兼容，Cloudflare Pages / Vercel 均可部署。
+2. **自动拉取（Pull）**：应用加载时，`useConfigSync` hook 从服务端拉取配置，与本地 `updatedAt` 时间戳比较——服务端更新时自动合并到本地。
+3. **自动推送（Push）**：本地设置变更后，自动延迟 3 秒推送到服务端（防抖），避免频繁写入。
+4. **同步范围**：视频源 (`sources`)、高级源 (`premiumSources`)、订阅列表 (`subscriptions`)、屏蔽分类 (`blockedCategories`)、排序偏好 (`sortBy`)、语言 (`locale`)。
+5. **数据隔离**：按 `profileId`（SHA-256 哈希）隔离，不同账户互不影响。
+
+**使用前提：**
+
+- 需配置 Upstash Redis 环境变量（`UPSTASH_REDIS_REST_URL` 和 `UPSTASH_REDIS_REST_TOKEN`），与观看历史/收藏同步共用同一 Redis 实例。
+- 未配置 Redis 时，配置同步功能静默降级——应用正常运行，仅本地存储生效。
+
+**典型场景：**
+
+- 电脑浏览器配置了视频源 → 手机打开同一实例 → 自动拉取到相同配置
+- iOS Safari「添加到主屏幕」后打开 PWA → 自动从 Redis 同步配置，无需重新设置
 
 ### 无障碍设计
 
@@ -597,6 +611,8 @@ docker run -e PORT=8080 -p 8080:8080 --name kvideo kuekhaoyang/kvideo:latest
 | `AD_KEYWORDS` / `NEXT_PUBLIC_AD_KEYWORDS` | 广告过滤关键词 | - |
 | `AD_KEYWORDS_FILE` | 广告关键词文件路径 | - |
 | `NEXT_PUBLIC_DANMAKU_API_URL` | 弹幕聚合 API 地址 | - |
+| `UPSTASH_REDIS_REST_URL` | Upstash Redis REST URL（跨设备同步：配置、历史、收藏） | - |
+| `UPSTASH_REDIS_REST_TOKEN` | Upstash Redis REST Token | - |
 
 ## 技术栈
 
@@ -604,7 +620,7 @@ docker run -e PORT=8080 -p 8080:8080 --name kvideo kuekhaoyang/kvideo:latest
 
 | 技术 | 版本 | 用途 |
 |------|------|------|
-| **[Next.js](https://nextjs.org/)** | 16.1.6 | React 框架，使用 App Router |
+| **[Next.js](https://nextjs.org/)** | 16.1.7 | React 框架，使用 App Router |
 | **[React](https://react.dev/)** | 19.2.4 | UI 组件库 |
 | **[TypeScript](https://www.typescriptlang.org/)** | 5.x | 类型安全的 JavaScript |
 | **[Tailwind CSS](https://tailwindcss.com/)** | 4.x | 实用优先的 CSS 框架 |

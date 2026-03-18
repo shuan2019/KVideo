@@ -42,6 +42,3 @@ next-env.d.ts
 
 # unused/generated files
 contrast-test-results.json
-
-# user data (server-side config sync)
-/.data/

@@ -1,26 +1,20 @@
 /**
- * User Config Sync API Route
- * File-based settings persistence for cross-device and PWA support.
- * Stores user settings (sources, IPTV, display preferences) server-side
+ * User Config Sync API Route (Edge Runtime)
+ * Upstash Redis-backed settings persistence for cross-device and PWA support.
+ * Stores user settings (sources, display preferences) server-side
  * so they persist across browsers, devices, and PWA installs.
- *
- * No external dependencies required — uses local JSON files.
  */
 
+import { Redis } from '@upstash/redis';
 import { NextRequest, NextResponse } from 'next/server';
-import fs from 'fs/promises';
-import path from 'path';
 
-const DATA_DIR = path.join(process.cwd(), '.data', 'user-config');
+export const runtime = 'edge';
 
-async function ensureDir() {
-  await fs.mkdir(DATA_DIR, { recursive: true });
-}
+const redis = Redis.fromEnv();
 
-function getFilePath(profileId: string): string {
-  // Sanitize profileId to prevent path traversal
+function redisKey(profileId: string): string {
   const safe = profileId.replace(/[^a-zA-Z0-9_-]/g, '');
-  return path.join(DATA_DIR, `${safe}.json`);
+  return `user:config:${safe}`;
 }
 
 export async function GET(request: NextRequest) {
@@ -31,15 +25,9 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    await ensureDir();
-    const filePath = getFilePath(profileId);
-    const content = await fs.readFile(filePath, 'utf-8');
-    const data = JSON.parse(content);
-    return NextResponse.json({ success: true, data });
-  } catch (error: any) {
-    if (error?.code === 'ENOENT') {
-      return NextResponse.json({ success: true, data: null });
-    }
+    const data = await redis.get(redisKey(profileId));
+    return NextResponse.json({ success: true, data: data || null });
+  } catch (error) {
     console.error('Config read error:', error);
     return NextResponse.json(
       { error: 'Failed to read config' },
@@ -56,21 +44,14 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    await ensureDir();
     const body = await request.json();
-    const filePath = getFilePath(profileId);
+    const key = redisKey(profileId);
 
     // Merge with existing data if present
-    let existing: any = {};
-    try {
-      const content = await fs.readFile(filePath, 'utf-8');
-      existing = JSON.parse(content);
-    } catch {
-      // File doesn't exist yet
-    }
+    const existing = (await redis.get(key)) as Record<string, any> | null;
+    const merged = { ...(existing || {}), ...body, updatedAt: Date.now() };
 
-    const merged = { ...existing, ...body, updatedAt: Date.now() };
-    await fs.writeFile(filePath, JSON.stringify(merged, null, 2), 'utf-8');
+    await redis.set(key, merged);
 
     return NextResponse.json({ success: true });
   } catch (error) {
